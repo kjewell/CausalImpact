@@ -1,4 +1,4 @@
-# Copyright 2014 Google Inc. All rights reserved.
+# Copyright 2014-2017 Google Inc. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -52,20 +52,24 @@ test_that("repmat", {
   expect_equal(repmat(c(10, 20), 1, 2), as.matrix(t(c(10, 20, 10, 20))))
 })
 
-test_that("IsWholeNumber", {
+test_that("is.wholenumber", {
   is.wholenumber <- CausalImpact:::is.wholenumber
 
   # Test empty input
-  expect_error(is.wholenumber())
+  expect_error(is.wholenumber(), "missing")
 
   # Test various standard cases
-  expect_error(is.wholenumber("a"))
+  expect_error(is.wholenumber("a"), "numeric")
   expect_equal(is.wholenumber(c(-1, 0, 1, 2, -1.1, 0.1, 1.1)),
-              c(TRUE, TRUE, TRUE, TRUE, FALSE, FALSE, FALSE))
+               c(TRUE, TRUE, TRUE, TRUE, FALSE, FALSE, FALSE))
   expect_equal(is.wholenumber(NA), NA)
 
   # Test documentation example
   expect_equal(is.wholenumber(c(1, 1.0, 1.2)), c(TRUE, TRUE, FALSE))
+
+  # Test different tolerances
+  expect_true(is.wholenumber(3.14, tolerance = 0.2))
+  expect_false(is.wholenumber(3.14, tolerance = 0.1))
 })
 
 test_that("cumsum.na.rm", {
@@ -90,6 +94,7 @@ test_that("cumsum.na.rm", {
 test_that("assert", {
   assert <- CausalImpact:::assert
 
+  # Test healthy input.
   expect_error(assert(), NA)
   expect_error(assert(TRUE), NA)
   expect_error(assert(TRUE, "foo"), NA)
@@ -98,6 +103,38 @@ test_that("assert", {
   expect_error(assert(FALSE, "foo"), "foo")
   expect_error(assert(3 > 5), "")
   expect_error(assert(3 > 5, "3 is not greater than 5"), "greater")
+
+  # Test that non-logical input produces an error.
+  bad.expr <- list(NA, 4, "test", expression(3 < 5), data.frame(x = 3, y = 5))
+  invisible(lapply(bad.expr, function(expr) {
+    expect_error(assert(expr, "test"), "test")
+  }))
+})
+
+test_that("is.numerically.equal", {
+  is.numerically.equal <- CausalImpact:::is.numerically.equal
+
+  # Test invalid input.
+  expect_error(is.numerically.equal(), "missing")
+  expect_error(is.numerically.equal("x", 3), "numeric")
+  expect_error(is.numerically.equal(1, c(2, 3)), "scalar")
+  expect_error(is.numerically.equal(1, 2, "tol"), "numeric")
+  expect_error(is.numerically.equal(1, 2, -1), "greater")
+
+  # Test valid input with two values being 'numerically equal' within the
+  # specified tolerance.
+  expect_true(is.numerically.equal(0, 0))
+  expect_true(is.numerically.equal(0, 0, tolerance = 1e-20))
+  expect_true(is.numerically.equal(1, 1))
+  expect_true(is.numerically.equal(-1, -1 + 1e-9))
+  expect_true(is.numerically.equal(1, -1, tolerance = 2.1))
+  expect_true(is.numerically.equal(0, 1, tolerance = 1.01))
+
+  # Test valid input with two values not being 'numerically equal' within the
+  # specified tolerance.
+  expect_false(is.numerically.equal(-1, -1.2))
+  expect_false(is.numerically.equal(-1e-15, 1e-15))
+  expect_false(is.numerically.equal(1, 1 + 1e-9, tolerance = 1e-10))
 })
 
 test_that("ParseArguments", {
@@ -188,6 +225,105 @@ test_that("StandardizeAllVariables", {
   expect_equal(mean(result$data), 0, tolerance = 0.0001)
   expect_equal(sd(result$data), 1, tolerance = 0.0001)
   expect_equal(result$UnStandardize, Standardize(data)$UnStandardize)
+})
+
+test_that("GetPeriodIndices.InvalidInput", {
+  GetPeriodIndices <- CausalImpact:::GetPeriodIndices
+
+  # Test missing input
+  expect_error(GetPeriodIndices(), "missing")
+
+  # Test wrong order of <period> and <times>
+  expect_error(GetPeriodIndices(1:200, c(101L, 200L)), "period")
+
+  # Test invalid times
+  times <- seq.Date(as.Date("2014-01-01"), as.Date("2014-01-01") + 199, by = 1)
+  bad.times <- list(NA, c(1:9, NA, 11:20), as.character(times))
+  invisible(lapply(bad.times, function(times) {
+    expect_error(GetPeriodIndices(c(101L, 200L), times), "times")
+  }))
+
+  # Test invalid period
+  bad.period <- list(NA, 1:100, 1:3, 200, c(150, 101))
+  invisible(lapply(bad.period, function(period) {
+    expect_error(GetPeriodIndices(period, 1:200), "period")
+  }))
+
+  # Test inconsistent period and times
+  times <- seq.Date(as.Date("2014-01-01"), as.Date("2014-01-01") + 199, by = 1)
+  period <- as.Date(c("2014-04-11", "2014-07-19"))  # 100 days
+  expect_error(GetPeriodIndices(c(101L, 200L), times), "class")
+  expect_error(GetPeriodIndices(period, 1:200), "class")
+
+  # Test period that is completely outside the range of <times>:
+  # - with integer time points
+  expect_error(GetPeriodIndices(c(-20L, -10L), 1:200), "period")
+  expect_error(GetPeriodIndices(c(201L, 210L), 1:200), "period")
+  #
+  # - with Date time points
+  times <- seq.Date(as.Date("2014-01-01"), as.Date("2014-01-01") + 199, by = 1)
+  expect_error(GetPeriodIndices(as.Date(c("2013-12-24", "2013-12-31")), times),
+               "period")
+  expect_error(GetPeriodIndices(as.Date(c("2014-12-24", "2014-12-31")), times),
+               "period")
+
+  # Test period that is inside the range of <times>, but so short it does not
+  # touch a single time point
+  expect_error(GetPeriodIndices(c(13L, 14L), 10L*(0:9)), "one data point")
+  times <- seq.Date(as.Date("2015-01-01"), as.Date("2015-01-01") + 28, by = 7)
+  period <- as.Date(c("2015-01-03", "2015-01-04"))
+  expect_error(GetPeriodIndices(period, times), "one data point")
+})
+
+test_that("GetPeriodIndices.HealthyInput", {
+  GetPeriodIndices <- CausalImpact:::GetPeriodIndices
+
+  # Test healthy input with integer time points
+  period <- c(101L, 200L)
+  times <- 1:200
+  result <- GetPeriodIndices(period, times)
+  expect_equal(result, period)
+  expect_true(is.integer(result))
+
+  # Integer time points not starting at 1
+  period <- c(101L, 200L)
+  times <- 51:200
+  result <- GetPeriodIndices(period, times)
+  expect_equal(result, c(51, 150))
+  expect_true(is.integer(result))
+
+  # Test healthy input with Date time points
+  period <- as.Date(c("2014-04-11", "2014-07-19"))  # 100 days
+  times <- seq.Date(as.Date("2014-01-01"), as.Date("2014-01-01") + 199, by = 1)
+  result <- GetPeriodIndices(period, times)
+  expect_equal(result, c(101, 200))
+  expect_true(is.integer(result))
+
+  # Test period consisting of one single time point, for integer time points
+  period <- c(21L, 21L)
+  times <- 11:30
+  result <- GetPeriodIndices(period, times)
+  expect_equal(result, c(11, 11))
+
+  # Test period consisting of one single time point, for Date time points
+  period <- as.Date(c("2014-01-10", "2014-01-10"))
+  times <- seq.Date(as.Date("2014-01-01"), as.Date("2014-01-31"), by = 1)
+  result <- GetPeriodIndices(period, times)
+  expect_equal(result, c(10, 10))
+
+  # Test period going beyond the range of <times>, for integer time points
+  expect_equal(GetPeriodIndices(c(1L, 20L), 11:30), c(1, 10))
+  expect_equal(GetPeriodIndices(c(21L, 40L), 11:30), c(11, 20))
+  expect_equal(GetPeriodIndices(c(1L, 40L), 11:30), c(1, 20))
+
+  # Test period going beyond the range of <times>, for Date time points
+  times <- seq.Date(as.Date("2015-03-11"), as.Date("2015-03-30"), by = 1)
+  expect_equal(GetPeriodIndices(as.Date(c("2015-03-01", "2015-03-20")), times),
+               c(1, 10))
+  expect_equal(GetPeriodIndices(as.Date(c("2015-03-21", "2015-04-01")), times),
+               c(11, 20))
+  expect_equal(GetPeriodIndices(as.Date(c("2015-03-01", "2015-04-01")), times),
+               c(1, 20))
 })
 
 test_that("InferPeriodIndicesFromData", {
