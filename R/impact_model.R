@@ -188,7 +188,7 @@ ConstructModel <- function(data, model.args = NULL) {
   sd.prior <- SdPrior(sigma.guess = model.args$prior.level.sd * sdy,
                       upper.limit = sdy,
                       sample.size = kLocalLevelPriorSampleSize)
-  ss <- AddLocalLevel(ss, y, sigma.prior = sd.prior)
+#  ss <- AddLocalLevel(ss, y, sigma.prior = sd.prior)  # drop local level from default
 
   # Add seasonal component?
   if (model.args$nseasons > 1) {
